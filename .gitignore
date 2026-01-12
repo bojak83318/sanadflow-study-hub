@@ -7,3 +7,10 @@
 .env.production.local
 # Ignore env files with secrets
 .vercel
+
+# Dependencies
+node_modules/
+.next/
+out/
+build/
+dist/
