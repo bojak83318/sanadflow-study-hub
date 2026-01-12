@@ -21,6 +21,7 @@
     "dependencies": {
         "@apollo/server": "^4.9.5",
         "@prisma/client": "^5.7.1",
+        "@supabase/supabase-js": "^2.90.1",
         "@tldraw/tldraw": "1.29.2",
         "bcryptjs": "^2.4.3",
         "graphql": "^16.8.1",
