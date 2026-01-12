@@ -1644,6 +1644,94 @@ vercel ls
 vercel logs sanadflow-affine --follow
 ```
 
+#### **5.1.1 GitHub-Vercel Automatic Deployment Integration**
+
+> [!IMPORTANT]
+> **Implemented**: January 12, 2026
+> **Live URL**: https://qalamcolab.vercel.app
+> **Health Check**: https://qalamcolab.vercel.app/api/health
+
+**Automatic Deployment Flow**:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Developer Machine                                           │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  1. Load GH_TOKEN from .env.local                   │   │
+│  │  2. git commit && git push origin main              │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                        ↓ Push
+┌─────────────────────────────────────────────────────────────┐
+│  GitHub Repository: bojak83318/sanadflow-study-hub          │
+│  - Automatic trigger on push to main                        │
+│  - GitHub Actions for backups (daily at 2 AM SGT)          │
+│  - GitHub Actions for keep-alive (every 6 days)            │
+└─────────────────────────────────────────────────────────────┘
+                        ↓ Webhook
+┌─────────────────────────────────────────────────────────────┐
+│  Vercel Platform                                             │
+│  - Auto-build on push                                        │
+│  - Environment variables pre-configured                      │
+│  - Production: https://qalamcolab.vercel.app                │
+│  - Preview: https://qalamcolab-*.vercel.app (per PR)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Local GitHub Authentication Workflow**:
+
+> [!CAUTION]
+> **NEVER use global GitHub credentials for this project.**
+> Always use the `GH_TOKEN` from `.env.local` as documented in `GEMINI.md`.
+
+```bash
+# Step 1: Load GH_TOKEN for this session
+export GH_TOKEN=$(grep '^GH_TOKEN=' .env.local | cut -d '=' -f2)
+
+# Step 2: Verify authentication
+gh auth status
+
+# Step 3: Commit and push
+git add .
+git commit -m "feat: your changes"
+git push origin main
+
+# Vercel will automatically deploy on push!
+```
+
+**Automation Scripts Available**:
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `scripts/upload-env-to-vercel.sh` | Upload .env.local vars to Vercel | `./scripts/upload-env-to-vercel.sh` |
+| `scripts/test-db-connection.sh` | Test Supabase database connectivity | `./scripts/test-db-connection.sh` |
+
+**Environment Variables Configured in Vercel**:
+
+| Variable | Scope | Status |
+|----------|-------|--------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Production | ✅ Configured |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Production | ✅ Configured |
+| `SUPABASE_SERVICE_ROLE_KEY` | Production | ✅ Configured |
+| `SUPABASE_JWT_SECRET` | Production | ✅ Configured |
+| `DATABASE_URL` | Production | ✅ Configured |
+| `DIRECT_URL` | Production | ✅ Configured |
+| `NEXT_PUBLIC_APP_URL` | Production | ✅ Configured |
+| `NODE_ENV` | Production | ✅ Configured |
+
+**Health Check Verification** (Jan 12, 2026):
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-01-12T03:04:40.852Z",
+  "checks": {
+    "database": {"ok": true, "latency_ms": 1241},
+    "storage": {"ok": true},
+    "auth": {"ok": true}
+  }
+}
+```
+
 ***
 
 ### **5.2 Supabase Project Setup**
