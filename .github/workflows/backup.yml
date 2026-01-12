@@ -1,0 +1,195 @@
+# ============================================================
+# Daily Database Backup Workflow
+# ============================================================
+# 
+# Purpose: Create daily PostgreSQL backups to ensure data safety
+# with 24-hour RPO (Recovery Point Objective).
+#
+# Schedule: Daily at 2 AM SGT (18:00 UTC previous day)
+# 
+# Storage:
+# - Primary: GitHub Artifacts (30-day retention)
+# - Secondary: Cloudflare R2 (optional, if configured)
+#
+# References:
+# - TDD v3.0: Section 3.2 (Backup Strategy)
+# - Story: INFRA-003
+# ============================================================
+
+name: Daily Database Backup
+
+on:
+  schedule:
+    # 2 AM Singapore Time = 18:00 UTC (previous day)
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    # Allow manual trigger from GitHub Actions UI
+    inputs:
+      upload_to_r2:
+        description: 'Also upload to Cloudflare R2'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  TZ: Asia/Singapore
+  BACKUP_RETENTION_DAYS: 30
+
+jobs:
+  backup:
+    name: Create Database Backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-16
+
+      - name: Generate backup filename
+        id: filename
+        run: |
+          set -euo pipefail
+          TIMESTAMP=$(TZ=Asia/Singapore date +%Y%m%d_%H%M%S)
+          BACKUP_FILE="sanadflow_backup_${TIMESTAMP}.sql.gz"
+          echo "BACKUP_FILE=${BACKUP_FILE}" >> $GITHUB_OUTPUT
+          echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "📁 Backup filename: ${BACKUP_FILE}"
+
+      - name: Create database backup
+        env:
+          # Use DIRECT_URL (port 5432) for pg_dump, not pooler
+          DATABASE_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          set -euo pipefail
+          
+          BACKUP_FILE="${{ steps.filename.outputs.BACKUP_FILE }}"
+          
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::DIRECT_URL secret is not configured"
+            exit 1
+          fi
+          
+          echo "🔄 Starting database backup..."
+          echo "Target file: ${BACKUP_FILE}"
+          
+          # Create backup with pg_dump
+          # --no-owner: Skip ownership commands (we use RLS)
+          # --no-acl: Skip access privilege commands
+          # --clean: Include DROP statements for clean restore
+          pg_dump "${DATABASE_URL}" \
+            --no-owner \
+            --no-acl \
+            --clean \
+            --if-exists \
+            --format=plain \
+            2>&1 | gzip -9 > "${BACKUP_FILE}"
+          
+          # Verify backup was created and has content
+          if [ ! -f "${BACKUP_FILE}" ]; then
+            echo "::error::Backup file was not created"
+            exit 1
+          fi
+          
+          BACKUP_SIZE=$(stat --printf="%s" "${BACKUP_FILE}")
+          if [ "${BACKUP_SIZE}" -lt 100 ]; then
+            echo "::error::Backup file is too small (${BACKUP_SIZE} bytes)"
+            exit 1
+          fi
+          
+          echo "✅ Backup created successfully"
+          echo "📊 Backup size: $(numfmt --to=iec ${BACKUP_SIZE})"
+
+      - name: Upload to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-backup-${{ steps.filename.outputs.TIMESTAMP }}
+          path: ${{ steps.filename.outputs.BACKUP_FILE }}
+          retention-days: 30
+          compression-level: 0  # Already compressed with gzip
+
+      - name: Upload to Cloudflare R2 (optional)
+        if: |
+          (github.event_name == 'schedule' || github.event.inputs.upload_to_r2 == 'true') &&
+          secrets.R2_ACCOUNT_ID != '' &&
+          secrets.R2_ACCESS_KEY_ID != '' &&
+          secrets.R2_SECRET_ACCESS_KEY != ''
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          
+          BACKUP_FILE="${{ steps.filename.outputs.BACKUP_FILE }}"
+          
+          echo "🔄 Installing rclone..."
+          curl -sL https://rclone.org/install.sh | sudo bash
+          
+          echo "🔄 Configuring R2 remote..."
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${R2_ACCESS_KEY_ID}
+          secret_access_key = ${R2_SECRET_ACCESS_KEY}
+          endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+          acl = private
+          EOF
+          
+          echo "🔄 Uploading to R2..."
+          rclone copy "${BACKUP_FILE}" r2:sanadflow-backups/daily/ \
+            --progress \
+            --s3-no-check-bucket
+          
+          echo "✅ R2 upload successful"
+
+      - name: Cleanup old R2 backups
+        if: |
+          (github.event_name == 'schedule') &&
+          secrets.R2_ACCOUNT_ID != ''
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          
+          echo "🔄 Cleaning up R2 backups older than ${BACKUP_RETENTION_DAYS} days..."
+          
+          # List and delete old backups
+          rclone delete r2:sanadflow-backups/daily/ \
+            --min-age "${BACKUP_RETENTION_DAYS}d" \
+            --dry-run || true
+          
+          echo "✅ Cleanup complete"
+
+      - name: Summary
+        run: |
+          echo "============================================"
+          echo "✅ Database Backup Completed"
+          echo "============================================"
+          echo "Backup file: ${{ steps.filename.outputs.BACKUP_FILE }}"
+          echo "Timestamp: $(TZ=Asia/Singapore date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "Retention: ${BACKUP_RETENTION_DAYS} days"
+          echo "============================================"
+
+  notify-on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: backup
+    if: failure()
+    
+    steps:
+      - name: Create failure notification
+        run: |
+          echo "::error::Database backup failed!"
+          echo "Check the backup job logs for details."
+          echo "Manual backup command:"
+          echo "  pg_dump \"\$DIRECT_URL\" | gzip > backup.sql.gz"

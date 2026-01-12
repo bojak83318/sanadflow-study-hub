@@ -1,0 +1,79 @@
+# https://supabase.com/docs/guides/local-development
+# Supabase CLI configuration for SanadFlow Study Hub
+# TDD v3.0 - Supabase + Vercel Architecture
+
+[project]
+project_id = "sanadflow-prod"
+region = "ap-southeast-1"  # Singapore region
+
+# ============================================================
+# API Configuration
+# ============================================================
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage"]
+extra_search_path = ["public"]
+max_rows = 1000
+
+# ============================================================
+# Database Configuration
+# PostgreSQL 16 with Arabic FTS extensions
+# ============================================================
+[db]
+port = 54322
+major_version = 16
+
+# Connection pooler (transaction mode for Prisma compatibility)
+[db.pooler]
+enabled = true
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+# ============================================================
+# Realtime Configuration
+# For Yjs CRDT sync via Supabase Realtime Broadcast API
+# ============================================================
+[realtime]
+enabled = true
+ip_version = "ipv4"
+
+# ============================================================
+# Storage Configuration
+# Diagram PNG/canvas state storage
+# ============================================================
+[storage]
+enabled = true
+file_size_limit = "50MB"
+
+# ============================================================
+# Auth Configuration
+# Email/password with auto-confirm for pilot
+# ============================================================
+[auth]
+enabled = true
+site_url = "https://sanadflow.vercel.app"
+additional_redirect_urls = ["http://localhost:3000"]
+jwt_expiry = 3600  # 1 hour
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false  # Auto-confirm for pilot (no email verification)
+
+# External OAuth providers (disabled for pilot)
+[auth.external.google]
+enabled = false
+
+[auth.external.github]
+enabled = false
+
+# ============================================================
+# Studio Configuration (local development UI)
+# ============================================================
+[studio]
+enabled = true
+port = 54323

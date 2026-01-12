@@ -1,0 +1,295 @@
+--- baseline_adapter.md+++ optimized_adapter.md@@ -390,3 +390,295 @@ ```
+ 
+ ---
++
++## Demonstrations
++
++### Example 1
++**Problem:**
++Implementing real-time, conflict-free collaborative editing (Google Docs style) requiring synchronized state across multiple users and persistence to a relational database.
++
++**Solution:**
++```typescript
++// src/services/yjs-persistence.service.ts
++import * as Y from 'yjs'
++import { WebsocketProvider } from 'y-websocket'
++import { PrismaClient } from '@prisma/client'
++
++const prisma = new PrismaClient()
++
++interface YjsDocument {
++  id: string
++  roomId: string
++  yjsState: Buffer // Binary CRDT state
++  updatedAt: Date
++}
++
++export class YjsPersistenceService {
++  private docs = new Map<string, Y.Doc>()
++  
++  // Load persisted Yjs document from PostgreSQL
++  async loadDocument(roomId: string): Promise<Y.Doc> {
++    const cached = this.docs.get(roomId)
++    if (cached) return cached
++    
++    const doc = new Y.Doc()
++    
++    try {
++      const persisted = await prisma.yjsDocument.findUnique({
++        where: { roomId }
++      })
++      
++      if (persisted?.yjsState) {
++        // Restore CRDT state from binary
++        Y.applyUpdate(doc, persisted.yjsState)
++      }
++      
++      this.docs.set(roomId, doc)
++      this.setupAutosave(roomId, doc)
++      
++      return doc
++    } catch (error) {
++      throw new Error(`Failed to load Yjs document: ${error.message}`)
++    }
++  }
++  
++  // Auto-save every 10 seconds
++  private setupAutosave(roomId: string, doc: Y.Doc) {
++    let pending = false
++    
++    doc.on('update', async (update: Uint8Array) => {
++      if (pending) return
++      pending = true
++      
++      setTimeout(async () => {
++        try {
++          const state = Y.encodeStateAsUpdate(doc)
++          
++          await prisma.yjsDocument.upsert({
++            where: { roomId },
++            update: {
++              yjsState: Buffer.from(state),
++              updatedAt: new Date()
++            },
++            create: {
++              roomId,
++              yjsState: Buffer.from(state),
++              updatedAt: new Date()
++            }
++          })
++        } catch (error) {
++          console.error(`Autosave failed for room ${roomId}:`, error)
++        } finally {
++          pending = false
++        }
++      }, 10000) // 10 seconds
++    })
++  }
++  
++  // Broadcast cursor positions to all clients
++  async broadcastAwareness(roomId: string, userId: string, cursor: { x: number; y: number }) {
++    const doc = await this.loadDocument(roomId)
++    const awareness = doc.getMap('awareness')
++    
++    awareness.set(userId, {
++      cursor,
++      name: userId,
++      timestamp: Date.now()
++    })
++  }
++}
++
++// src/graphql/subscriptions/collaboration.ts
++import { withFilter } from 'graphql-subscriptions'
++import { PubSub } from 'graphql-subscriptions'
++
++const pubsub = new PubSub()
++
++export const collaborationSubscriptions = {
++  Subscription: {
++    documentUpdated: {
++      subscribe: withFilter(
++        () => pubsub.asyncIterator(['DOCUMENT_UPDATED']),
++        (payload, variables) => {
++          return payload.documentUpdated.roomId === variables.roomId
++        }
++      )
++    },
++    
++    cursorMoved: {
++      subscribe: withFilter(
++        () => pubsub.asyncIterator(['CURSOR_MOVED']),
++        (payload, variables) => {
++          return payload.cursorMoved.roomId === variables.roomId
++        }
++      )
++    }
++  },
++  
++  Mutation: {
++    syncYjsUpdate: async (_: any, { roomId, update }: { roomId: string; update: string }) => {
++      const yjsService = new YjsPersistenceService()
++      const doc = await yjsService.loadDocument(roomId)
++      
++      // Apply update from client
++      Y.applyUpdate(doc, Buffer.from(update, 'base64'))
++      
++      // Broadcast to other clients
++      pubsub.publish('DOCUMENT_UPDATED', {
++        documentUpdated: {
++          roomId,
++          update,
++          timestamp: Date.now()
++        }
++      })
++      
++      return { success: true }
++    }
++  }
++}
++
++// WebSocket server setup (separate from Apollo HTTP)
++// src/websocket/yjs-server.ts
++import { WebSocketServer } from 'ws'
++import { setupWSConnection } from 'y-websocket/bin/utils'
++
++export function startYjsWebSocketServer(port: number = 1234) {
++  const wss = new WebSocketServer({ port })
++  
++  wss.on('connection', (ws, req) => {
++    setupWSConnection(ws, req, {
++      // Custom persistence callback
++      onLoadDocument: async (docName: string) => {
++        const service = new YjsPersistenceService()
++        return service.loadDocument(docName)
++      }
++    })
++  })
++  
++  console.log(`Yjs WebSocket server running on ws://localhost:${port}`)
++}
++```
++
++---
++
++### Example 2
++**Problem:**
++PostgreSQL Arabic full-text search requires custom configuration due to language-specific stemming limitations. Standard Prisma FTS support may not cover domain-specific Islamic terminology or optimal stemming for Arabic.
++
++**Solution:**
++```typescript
++// prisma/schema.prisma
++generator client {
++  provider        = "prisma-client-js"
++  previewFeatures = ["fullTextSearchPostgres"]
++}
++
++model HadithText {
++  id        String   @id @default(uuid())
++  matn      String   // Arabic hadith text
++  sanad     String   // Chain of narrators
++  narrator  String
++  book      String
++  chapter   Int
++  createdAt DateTime @default(now())
++  
++  @@index([matn, sanad]) // For mixed search
++}
++
++// src/resolvers/hadith.resolver.ts
++import { PrismaClient } from '@prisma/client'
++import { ApolloError } from 'apollo-server-errors'
++
++const prisma = new PrismaClient()
++
++export const hadithResolvers = {
++  Query: {
++    searchHadith: async (
++      _: any,
++      { query, language = 'arabic' }: { query: string; language: string }
++    ) => {
++      try {
++        // Normalize Arabic text to handle different Unicode forms
++        const normalizedQuery = query.normalize('NFC')
++        
++        // Use raw SQL for Arabic-specific FTS configuration
++        const result = await prisma.$queryRaw`
++          SELECT 
++            id, 
++            matn, 
++            sanad, 
++            narrator,
++            ts_rank(
++              to_tsvector('arabic', matn || ' ' || sanad),
++              to_tsquery('arabic', ${normalizedQuery})
++            ) AS relevance
++          FROM "HadithText"
++          WHERE to_tsvector('arabic', matn || ' ' || sanad) 
++                @@ to_tsquery('arabic', ${normalizedQuery})
++          ORDER BY relevance DESC
++          LIMIT 50;
++        `
++        
++        return result
++      } catch (error) {
++        // Handle PostgreSQL text search errors
++        if (error.code === '42P01') {
++          throw new ApolloError('Arabic text search configuration missing', 'FTS_CONFIG_ERROR')
++        }
++        throw new ApolloError(`Search failed: ${error.message}`, 'SEARCH_ERROR')
++      }
++    },
++    
++    // Mixed language search (Arabic + English transliteration)
++    searchHadithMixed: async (_: any, { arabicTerm, englishTerm }: { arabicTerm?: string; englishTerm?: string }) => {
++      try {
++        const conditions = []
++        
++        if (arabicTerm) {
++          conditions.push(prisma.$queryRaw`
++            to_tsvector('arabic', matn) @@ to_tsquery('arabic', ${arabicTerm.normalize('NFC')})
++          `)
++        }
++        
++        if (englishTerm) {
++          conditions.push(prisma.$queryRaw`
++            to_tsvector('english', narrator) @@ to_tsquery('english', ${englishTerm})
++          `)
++        }
++        
++        return prisma.hadithText.findMany({
++          where: {
++            OR: conditions
++          },
++          orderBy: {
++            _relevance: {
++              fields: ['matn', 'narrator'],
++              search: arabicTerm || englishTerm,
++              sort: 'desc'
++            }
++          },
++          take: 50
++        })
++      } catch (error) {
++        throw new ApolloError(`Mixed search failed: ${error.message}`, 'MIXED_SEARCH_ERROR')
++      }
++    }
++  }
++}
++
++// Migration for Arabic FTS setup
++// migrations/001_setup_arabic_fts.sql
++CREATE TEXT SEARCH CONFIGURATION arabic_custom ( COPY = arabic );
++
++-- Add custom synonyms for Islamic terms
++ALTER TEXT SEARCH CONFIGURATION arabic_custom
++  ALTER MAPPING FOR asciiword, asciihword, hword_asciipart
++  WITH arabic_stem;
++
++-- Create GIN index for performance
++CREATE INDEX idx_hadith_arabic_fts 
++ON "HadithText" 
++USING GIN (to_tsvector('arabic_custom', matn || ' ' || sanad));
++```
++
++---

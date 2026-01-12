@@ -1,0 +1,9 @@
+{
+  "skill": "product-manager",
+  "category": "product-manager",
+  "optimizer": "COPRO",
+  "baseline_chars": 12913,
+  "optimized_chars": 480,
+  "changed": true,
+  "timestamp": "20260111_182914"
+}

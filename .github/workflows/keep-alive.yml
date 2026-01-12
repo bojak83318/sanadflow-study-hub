@@ -1,0 +1,118 @@
+# ============================================================
+# Supabase Keep-Alive Workflow
+# ============================================================
+# 
+# Purpose: Prevent Supabase free tier project from pausing
+# due to 7-day inactivity timeout.
+#
+# Schedule: Every 6 days (before the 7-day pause threshold)
+# 
+# References:
+# - TDD v3.0: Section 2.2 (7-day inactivity pause mitigation)
+# - Story: INFRA-003
+# ============================================================
+
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Every 6 days at 00:00 UTC
+    - cron: '0 0 */6 * *'
+  workflow_dispatch:
+    # Allow manual trigger from GitHub Actions UI
+
+env:
+  TZ: Asia/Singapore
+
+jobs:
+  ping:
+    name: Ping Supabase Services
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Ping Supabase Database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::DATABASE_URL secret is not configured"
+            exit 1
+          fi
+          
+          echo "🔄 Pinging Supabase PostgreSQL..."
+          
+          # Use psql with timeout
+          timeout 30 psql "${DATABASE_URL}" -c "SELECT 1 AS ping, NOW() AS timestamp;" || {
+            echo "::error::Database ping failed"
+            exit 1
+          }
+          
+          echo "✅ Database ping successful"
+
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::Supabase URL or Anon Key secrets not configured"
+            exit 1
+          fi
+          
+          echo "🔄 Pinging Supabase REST API..."
+          
+          # Ping the REST API with a simple health check
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            -X GET "${SUPABASE_URL}/rest/v1/" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+            echo "✅ REST API ping successful (HTTP ${HTTP_STATUS})"
+          else
+            echo "::error::REST API ping failed (HTTP ${HTTP_STATUS})"
+            exit 1
+          fi
+
+      - name: Ping Supabase Auth
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          
+          echo "🔄 Pinging Supabase Auth..."
+          
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            -X GET "${SUPABASE_URL}/auth/v1/health" \
+            -H "apikey: ${SUPABASE_ANON_KEY}")
+          
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ Auth service ping successful"
+          else
+            echo "⚠️ Auth health check returned HTTP ${HTTP_STATUS} (may be expected)"
+          fi
+
+      - name: Log Success
+        run: |
+          echo "============================================"
+          echo "✅ Supabase Keep-Alive Completed"
+          echo "Timestamp: $(TZ=Asia/Singapore date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "Next scheduled run: $(date -d '+6 days' '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "============================================"

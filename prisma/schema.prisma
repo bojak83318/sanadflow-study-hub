@@ -1,0 +1,236 @@
+// Prisma Schema for SanadFlow Study Hub
+// TDD v2.0 Section 3.1 - Core Tables
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique @db.VarChar(255)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  fullName     String    @map("full_name") @db.VarChar(255)
+  role         String    @default("member") @db.VarChar(50)
+  avatarUrl    String?   @map("avatar_url")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  isActive     Boolean   @default(true) @map("is_active")
+
+  ownedWorkspaces      Workspace[]        @relation("WorkspaceOwner")
+  workspaceMemberships WorkspaceMember[]
+  createdDocuments     Document[]         @relation("DocumentCreator")
+  updatedDocuments     Document[]         @relation("DocumentUpdater")
+  createdHadiths       Hadith[]
+  createdNarrators     Narrator[]
+  createdDiagrams      Diagram[]
+  comments             Comment[]
+  resolvedComments     Comment[]          @relation("CommentResolver")
+  documentVersions     DocumentVersion[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+model Workspace {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(255)
+  slug        String   @unique @db.VarChar(100)
+  description String?
+  ownerId     String   @map("owner_id") @db.Uuid
+  iconEmoji   String?  @map("icon_emoji") @db.VarChar(10)
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner     User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   WorkspaceMember[]
+  documents Document[]
+  hadiths   Hadith[]
+  narrators Narrator[]
+  diagrams  Diagram[]
+
+  @@index([ownerId])
+  @@index([slug])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String   @id @default(uuid()) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  permission  String   @default("edit") @db.VarChar(20)
+  invitedBy   String?  @map("invited_by") @db.Uuid
+  joinedAt    DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("workspace_members")
+}
+
+model Document {
+  id            String    @id @default(uuid()) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
+  title         String    @db.VarChar(500)
+  contentYjs    Bytes?    @map("content_yjs")
+  contentJson   Json?     @map("content_json")
+  parentId      String?   @map("parent_id") @db.Uuid
+  iconEmoji     String?   @map("icon_emoji") @db.VarChar(10)
+  coverImageUrl String?   @map("cover_image_url")
+  isTemplate    Boolean   @default(false) @map("is_template")
+  createdBy     String    @map("created_by") @db.Uuid
+  updatedBy     String?   @map("updated_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   User               @relation("DocumentCreator", fields: [createdBy], references: [id])
+  updater   User?              @relation("DocumentUpdater", fields: [updatedBy], references: [id])
+  parent    Document?          @relation("DocumentHierarchy", fields: [parentId], references: [id])
+  children  Document[]         @relation("DocumentHierarchy")
+  hadiths   Hadith[]
+  diagrams  Diagram[]
+  comments  Comment[]
+  versions  DocumentVersion[]
+
+  @@index([workspaceId])
+  @@index([parentId])
+  @@map("documents")
+}
+
+model Hadith {
+  id                 String   @id @default(uuid()) @db.Uuid
+  workspaceId        String   @map("workspace_id") @db.Uuid
+  documentId         String?  @map("document_id") @db.Uuid
+  arabicText         String   @map("arabic_text")
+  englishTranslation String?  @map("english_translation")
+  transliteration    String?
+  collection         String?  @db.VarChar(100)
+  bookNumber         String?  @map("book_number") @db.VarChar(50)
+  hadithNumber       String?  @map("hadith_number") @db.VarChar(50)
+  grading            String?  @db.VarChar(50)
+  narratorIds        String[] @map("narrator_ids") @db.Uuid
+  narrationChain     String?  @map("narration_chain")
+  topicTags          String[] @map("topic_tags")
+  notes              String?
+  createdBy          String   @map("created_by") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document? @relation(fields: [documentId], references: [id])
+  creator   User      @relation(fields: [createdBy], references: [id])
+
+  @@index([workspaceId])
+  @@index([grading])
+  @@map("hadiths")
+}
+
+model Narrator {
+  id               String   @id @default(uuid()) @db.Uuid
+  workspaceId      String   @map("workspace_id") @db.Uuid
+  nameArabic       String   @map("name_arabic") @db.VarChar(255)
+  nameEnglish      String?  @map("name_english") @db.VarChar(255)
+  kunyah           String?  @db.VarChar(100)
+  laqab            String?  @db.VarChar(100)
+  birthYear        Int?     @map("birth_year")
+  deathYear        Int?     @map("death_year")
+  biographyAr      String?  @map("biography_ar")
+  biographyEn      String?  @map("biography_en")
+  reliabilityGrade String?  @map("reliability_grade") @db.VarChar(50)
+  teachers         String[] @db.Uuid
+  students         String[] @db.Uuid
+  createdBy        String   @map("created_by") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   User      @relation(fields: [createdBy], references: [id])
+
+  @@index([workspaceId])
+  @@map("narrators")
+}
+
+model Diagram {
+  id              String   @id @default(uuid()) @db.Uuid
+  workspaceId     String   @map("workspace_id") @db.Uuid
+  documentId      String?  @map("document_id") @db.Uuid
+  title           String   @db.VarChar(255)
+  description     String?
+  storageLocation String   @map("storage_location") @db.VarChar(20)
+  blob            Bytes?
+  r2Url           String?  @map("r2_url")
+  fileSizeBytes   BigInt   @map("file_size_bytes")
+  mimeType        String   @default("image/png") @map("mime_type") @db.VarChar(50)
+  canvasState     Json?    @map("canvas_state")
+  createdBy       String   @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document? @relation(fields: [documentId], references: [id])
+  creator   User      @relation(fields: [createdBy], references: [id])
+
+  @@index([workspaceId])
+  @@index([storageLocation])
+  @@index([documentId])
+  @@map("diagrams")
+}
+
+model Comment {
+  id              String    @id @default(uuid()) @db.Uuid
+  documentId      String    @map("document_id") @db.Uuid
+  parentCommentId String?   @map("parent_comment_id") @db.Uuid
+  content         String
+  contentJson     Json?     @map("content_json")
+  selectionStart  Int?      @map("selection_start")
+  selectionEnd    Int?      @map("selection_end")
+  selectionText   String?   @map("selection_text")
+  authorId        String    @map("author_id") @db.Uuid
+  isResolved      Boolean   @default(false) @map("is_resolved")
+  resolvedBy      String?   @map("resolved_by") @db.Uuid
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  document Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  parent   Comment?  @relation("CommentThread", fields: [parentCommentId], references: [id])
+  replies  Comment[] @relation("CommentThread")
+  author   User      @relation(fields: [authorId], references: [id])
+  resolver User?     @relation("CommentResolver", fields: [resolvedBy], references: [id])
+
+  @@index([documentId])
+  @@index([authorId])
+  @@map("comments")
+}
+
+model DocumentVersion {
+  id                String   @id @default(uuid()) @db.Uuid
+  documentId        String   @map("document_id") @db.Uuid
+  versionNumber     Int      @map("version_number")
+  title             String   @db.VarChar(500)
+  contentYjs        Bytes?   @map("content_yjs")
+  contentJson       Json?    @map("content_json")
+  changedBy         String   @map("changed_by") @db.Uuid
+  changeDescription String?  @map("change_description")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  changer  User     @relation(fields: [changedBy], references: [id])
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId])
+  @@map("document_versions")
+}

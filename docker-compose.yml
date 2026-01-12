@@ -1,0 +1,93 @@
+version: '3.8'
+
+# SanadFlow AFFiNE Development Stack
+# Phase 0: RTL Validation Environment
+
+services:
+  # PostgreSQL with Arabic FTS support
+  postgres:
+    image: postgres:16-alpine
+    container_name: sanadflow-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: sanadflow_dev_2026
+      POSTGRES_DB: affine_development
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    ports:
+      - "5432:5432"
+    command: >
+      postgres
+        -c shared_buffers=64MB
+        -c max_connections=50
+        -c log_min_duration_statement=500
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PgBouncer connection pooler
+  pgbouncer:
+    image: edoburu/pgbouncer:1.21.0
+    container_name: sanadflow-pgbouncer
+    environment:
+      DATABASE_URL: postgres://postgres:sanadflow_dev_2026@postgres:5432/affine_development
+      POOL_MODE: session
+      MAX_CLIENT_CONN: 50
+      DEFAULT_POOL_SIZE: 5
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Redis for caching (embedded mode simulation)
+  redis:
+    image: redis:7.2-alpine
+    container_name: sanadflow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 100mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # AFFiNE Next.js Application (development)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: sanadflow-app
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://postgres:sanadflow_dev_2026@pgbouncer:6432/affine_development
+      REDIS_URL: redis://redis:6379
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src:/app/src:cached
+      - ./public:/app/public:cached
+      - ./prisma:/app/prisma:cached
+      - node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: npm run dev
+
+volumes:
+  postgres_data:
+  redis_data:
+  node_modules:
+
+networks:
+  default:
+    name: sanadflow-network

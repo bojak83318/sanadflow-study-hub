@@ -1,0 +1,177 @@
+---
+id: "qa_002_k6_load"
+difficulty: "hard"
+tags: ["k6", "load-testing", "graphql", "yjs", "websockets"]
+source_url: "https://www.reactlibraries.com/tutorials/building-real-time-collab-editors-with-next-js-15-yjs"
+---
+
+# k6 Load Testing for GraphQL + Yjs
+
+## Problem
+Validating that the backend can handle 10-20 concurrent users with <500ms GraphQL response time and <200ms real-time collaboration latency on limited hardware (256MB RAM).
+
+## Solution
+
+```javascript
+// loadtest/graphql-yjs.test.js
+import http from 'k6/http'
+import ws from 'k6/ws'
+import { check, sleep } from 'k6'
+import { Counter, Trend } from 'k6/metrics'
+
+// Custom metrics
+const graphqlErrors = new Counter('graphql_errors')
+const yjsSyncLatency = new Trend('yjs_sync_latency')
+
+export const options = {
+  stages: [
+    { duration: '1m', target: 10 },  // Ramp to 10 users
+    { duration: '3m', target: 10 },  // Hold 10 users
+    { duration: '1m', target: 20 },  // Ramp to 20 users
+    { duration: '3m', target: 20 },  // Hold 20 users (realistic for 5-10 student groups)
+    { duration: '1m', target: 0 },   // Ramp down
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<500'], // 95% requests under 500ms
+    graphql_errors: ['count<10'],      // Max 10 errors
+    yjs_sync_latency: ['p(95)<200'],   // 95% Yjs syncs under 200ms
+  },
+}
+
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000'
+const WS_URL = __ENV.WS_URL || 'ws://localhost:1234'
+
+export default function () {
+  // 1. GraphQL authentication
+  const loginMutation = {
+    query: `
+      mutation Login($email: String!) {
+        login(email: $email) {
+          token
+          userId
+        }
+      }
+    `,
+    variables: {
+      email: `loadtest-${__VU}@example.com`
+    }
+  }
+  
+  const authRes = http.post(`${BASE_URL}/graphql`, JSON.stringify(loginMutation), {
+    headers: { 'Content-Type': 'application/json' }
+  })
+  
+  check(authRes, {
+    'auth successful': (r) => r.status === 200 && !r.json().errors,
+  }) || graphqlErrors.add(1)
+  
+  const token = authRes.json().data?.login?.token
+  const userId = authRes.json().data?.login?.userId
+  
+  sleep(1)
+  
+  // 2. Create/join room via GraphQL
+  const createRoomMutation = {
+    query: `
+      mutation CreateRoom($name: String!, $isPublic: Boolean!) {
+        createRoom(name: $name, isPublic: $isPublic) {
+          id
+          name
+        }
+      }
+    `,
+    variables: {
+      name: `Load Test Room ${__VU}`,
+      isPublic: true
+    }
+  }
+  
+  const roomRes = http.post(`${BASE_URL}/graphql`, JSON.stringify(createRoomMutation), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    }
+  })
+  
+  check(roomRes, {
+    'room created': (r) => r.status === 200 && !r.json().errors,
+  }) || graphqlErrors.add(1)
+  
+  const roomId = roomRes.json().data?.createRoom?.id
+  
+  sleep(1)
+  
+  // 3. Yjs WebSocket collaboration
+  const wsUrl = `${WS_URL}/${roomId}`
+  
+  const res = ws.connect(wsUrl, {}, function (socket) {
+    socket.on('open', () => {
+      console.log(`VU ${__VU}: Connected to room ${roomId}`)
+      
+      // Simulate collaborative editing
+      const startTime = Date.now()
+      
+      // Send Yjs update (simplified)
+      socket.send(JSON.stringify({
+        type: 'update',
+        update: Buffer.from('fake-yjs-update').toString('base64')
+      }))
+      
+      socket.on('message', (data) => {
+        const latency = Date.now() - startTime
+        yjsSyncLatency.add(latency)
+      })
+      
+      // Keep connection alive for 30 seconds
+      socket.setTimeout(() => {
+        socket.close()
+      }, 30000)
+    })
+    
+    socket.on('error', (e) => {
+      console.error(`VU ${__VU}: WebSocket error:`, e)
+      graphqlErrors.add(1)
+    })
+  })
+  
+  check(res, {
+    'yjs connection successful': (r) => r && r.status === 101,
+  })
+  
+  sleep(30) // Collaborate for 30 seconds
+  
+  // 4. Arabic FTS search query
+  const searchQuery = {
+    query: `
+      query SearchHadith($term: String!) {
+        searchHadith(query: $term) {
+          id
+          matn
+          narrator
+        }
+      }
+    `,
+    variables: {
+      term: 'الصلاة' // "Prayer" in Arabic
+    }
+  }
+  
+  const searchRes = http.post(`${BASE_URL}/graphql`, JSON.stringify(searchQuery), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    }
+  })
+  
+  check(searchRes, {
+    'search returned results': (r) => r.status === 200 && r.json().data?.searchHadith?.length > 0,
+  }) || graphqlErrors.add(1)
+  
+  sleep(2)
+}
+```
+
+## Key Learnings
+- **Mixed Traffic**: Validating HTTP/GraphQL and WebSocket traffic simultaneously mimics real-world usage patterns accurately.
+- **Custom Metrics**: Tracking custom trends via `yjs_sync_latency` helps isolate real-time collaboration bottlenecks.
+- **Protocol Support**: k6's native WebSocket support is essential for testing the interactive parts of the application stack.

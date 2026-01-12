@@ -1,0 +1,557 @@
+/**
+ * RTL Text Validation Test Suite
+ * Phase 0: RTL Validation Gate (50 test cases)
+ * 
+ * Agent: qa-engineer
+ * Reference: TDD_v2.0.md Section 7.1
+ */
+
+import { test, expect, Page } from '@playwright/test';
+
+// ==============================================
+// TEST CATEGORY 1: Pure Arabic Paragraphs (10 tests)
+// ==============================================
+
+test.describe('Pure Arabic Text Rendering', () => {
+    test.beforeEach(async ({ page }) => {
+        await page.goto('/test/rtl-sandbox');
+    });
+
+    test('P1-01: 100-word Quran paragraph renders correctly', async ({ page }) => {
+        const arabicText = 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ';
+        const editor = page.locator('[data-testid="arabic-editor"]');
+
+        await editor.fill(arabicText);
+
+        await expect(editor).toHaveAttribute('dir', 'rtl');
+        await expect(editor).toHaveCSS('text-align', 'right');
+        await expect(editor).toHaveCSS('direction', 'rtl');
+    });
+
+    test('P1-02: Arabic diacritics (harakat) preserved', async ({ page }) => {
+        const textWithDiacritics = 'الرَّحْمَٰنِ الرَّحِيمِ';
+        const editor = page.locator('[data-testid="arabic-editor"]');
+
+        await editor.fill(textWithDiacritics);
+
+        const displayedText = await editor.inputValue();
+        expect(displayedText.normalize('NFC')).toBe(textWithDiacritics.normalize('NFC'));
+    });
+
+    test('P1-03: Cursor position stable after 50 chars', async ({ page }) => {
+        const editor = page.locator('[data-testid="arabic-editor"]');
+        const text = 'ا'.repeat(50);
+
+        await editor.fill(text);
+        await editor.press('End');
+
+        const cursorPos = await page.evaluate(() => {
+            const el = document.querySelector('[data-testid="arabic-editor"]') as HTMLInputElement;
+            return el?.selectionStart;
+        });
+
+        expect(cursorPos).toBe(50);
+    });
+
+    test('P1-04: No cursor jump when typing sequentially', async ({ page }) => {
+        const editor = page.locator('[data-testid="arabic-editor"]');
+
+        for (const char of 'مرحبا') {
+            await editor.type(char, { delay: 100 });
+        }
+
+        await expect(editor).toHaveValue('مرحبا');
+    });
+
+    test('P1-05: Arabic numbers render correctly (٠-٩)', async ({ page }) => {
+        const arabicNumbers = '٠١٢٣٤٥٦٧٨٩';
+        const editor = page.locator('[data-testid="arabic-editor"]');
+
+        await editor.fill(arabicNumbers);
+        await expect(editor).toHaveValue(arabicNumbers);
+    });
+
+    test('P1-06: Long Arabic paragraph wraps correctly', async ({ page }) => {
+        const longText = 'هذا نص طويل جداً '.repeat(20);
+        const editor = page.locator('[data-testid="arabic-editor"]');
+
+        await editor.fill(longText);
+
+        const boundingBox = await editor.boundingBox();
+        expect(boundingBox?.height).toBeGreaterThan(50); // Multiple lines
+    });
+
+    test('P1-07: Arabic punctuation renders correctly', async ({ page }) => {
+        const textWithPunctuation = 'السلام عليكم، كيف حالك؟';
+        const editor = page.locator('[data-testid="arabic-editor"]');
+
+        await editor.fill(textWithPunctuation);
+        await expect(editor).toHaveValue(textWithPunctuation);
+    });
+
+    test('P1-08: Copy-paste Arabic preserves formatting', async ({ page }) => {
+        const editor = page.locator('[data-testid="arabic-editor"]');
+        const text = 'نص للنسخ';
+
+        await editor.fill(text);
+        await editor.selectText();
+        await page.keyboard.press('Control+C');
+        await editor.fill('');
+        await page.keyboard.press('Control+V');
+
+        await expect(editor).toHaveValue(text);
+    });
+
+    test('P1-09: Arabic text searchable', async ({ page }) => {
+        const searchInput = page.locator('[data-testid="search-input"]');
+        await searchInput.fill('الحديث');
+
+        const results = page.locator('[data-testid="search-results"]');
+        await expect(results).toBeVisible();
+    });
+
+    test('P1-10: Empty state shows Arabic placeholder', async ({ page }) => {
+        const editor = page.locator('[data-testid="arabic-editor"]');
+        const placeholder = await editor.getAttribute('placeholder');
+
+        expect(placeholder).toMatch(/[\u0600-\u06FF]/); // Arabic Unicode range
+    });
+});
+
+// ==============================================
+// TEST CATEGORY 2: Mixed Arabic-English (15 tests)
+// ==============================================
+
+test.describe('Mixed Arabic-English Text', () => {
+    test.beforeEach(async ({ page }) => {
+        await page.goto('/test/rtl-sandbox');
+    });
+
+    test('P2-01: Inline English in Arabic sentence', async ({ page }) => {
+        const mixed = 'قال الإمام (Imam Ahmad) في مسنده';
+        const editor = page.locator('[data-testid="mixed-editor"]');
+
+        await editor.fill(mixed);
+        await expect(editor).toHaveValue(mixed);
+    });
+
+    test('P2-02: Cursor stays correct in mixed text', async ({ page }) => {
+        const editor = page.locator('[data-testid="mixed-editor"]');
+        await editor.fill('مرحبا Hello عالم');
+
+        // Move cursor to middle
+        await editor.click();
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.press('ArrowLeft');
+
+        // Insert at cursor
+        await page.keyboard.type('X');
+
+        const value = await editor.inputValue();
+        expect(value).toContain('X');
+    });
+
+    test('P2-03: English terminology inline preserves layout', async ({ page }) => {
+        const hadithRef = 'رواه البخاري (Sahih Bukhari) في كتاب الإيمان';
+        const editor = page.locator('[data-testid="mixed-editor"]');
+
+        await editor.fill(hadithRef);
+        await expect(editor).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P2-04: URLs in Arabic paragraph', async ({ page }) => {
+        const textWithUrl = 'رابط الموقع https://example.com للمزيد';
+        const editor = page.locator('[data-testid="mixed-editor"]');
+
+        await editor.fill(textWithUrl);
+        await expect(editor).toHaveValue(textWithUrl);
+    });
+
+    test('P2-05: Email addresses in Arabic', async ({ page }) => {
+        const textWithEmail = 'تواصل معنا على user@example.com وشكراً';
+        const editor = page.locator('[data-testid="mixed-editor"]');
+
+        await editor.fill(textWithEmail);
+        await expect(editor).toHaveValue(textWithEmail);
+    });
+
+    test('P2-06: Hadith grading with English code', async ({ page }) => {
+        const grading = 'درجة الحديث: SAHIH (صحيح)';
+        const editor = page.locator('[data-testid="mixed-editor"]');
+
+        await editor.fill(grading);
+        await expect(editor).toHaveValue(grading);
+    });
+
+    test('P2-07: Narrator name with transliteration', async ({ page }) => {
+        const narrator = 'أبو هريرة (Abu Hurayrah) رضي الله عنه';
+        const editor = page.locator('[data-testid="mixed-editor"]');
+
+        await editor.fill(narrator);
+        await expect(editor).toHaveValue(narrator);
+    });
+
+    test('P2-08: Technical terms in Arabic context', async ({ page }) => {
+        const technical = 'استخدم API لربط قاعدة البيانات PostgreSQL';
+        const editor = page.locator('[data-testid="mixed-editor"]');
+
+        await editor.fill(technical);
+        await expect(editor).toHaveValue(technical);
+    });
+
+    test('P2-09: Arabic-English bullet points', async ({ page }) => {
+        await page.goto('/test/list-sandbox');
+        const list = page.locator('[data-testid="mixed-list"]');
+
+        await expect(list).toHaveAttribute('dir', 'rtl');
+        await expect(list.locator('li').first()).toBeVisible();
+    });
+
+    test('P2-10: Table with bilingual headers', async ({ page }) => {
+        await page.goto('/test/table-sandbox');
+        const table = page.locator('[data-testid="bilingual-table"]');
+
+        await expect(table).toBeVisible();
+        const headerAr = table.locator('th').first();
+        await expect(headerAr).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P2-11: Form labels Arabic, input English', async ({ page }) => {
+        await page.goto('/test/form-sandbox');
+        const label = page.locator('label[for="email"]');
+
+        await expect(label).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P2-12: Dropdown with Arabic options', async ({ page }) => {
+        await page.goto('/test/form-sandbox');
+        const select = page.locator('[data-testid="grading-select"]');
+
+        await select.click();
+        const option = page.locator('option:has-text("صحيح")');
+        await expect(option).toBeVisible();
+    });
+
+    test('P2-13: Modal dialog RTL layout', async ({ page }) => {
+        await page.goto('/test/modal-sandbox');
+        await page.click('[data-testid="open-modal"]');
+
+        const modal = page.locator('[data-testid="rtl-modal"]');
+        await expect(modal).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P2-14: Toast notification RTL', async ({ page }) => {
+        await page.goto('/test/toast-sandbox');
+        await page.click('[data-testid="trigger-toast"]');
+
+        const toast = page.locator('[data-testid="toast"]');
+        await expect(toast).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P2-15: Breadcrumb navigation RTL', async ({ page }) => {
+        await page.goto('/workspace/test/documents');
+        const breadcrumb = page.locator('[data-testid="breadcrumb"]');
+
+        await expect(breadcrumb).toHaveAttribute('dir', 'rtl');
+    });
+});
+
+// ==============================================
+// TEST CATEGORY 3: Whiteboard Arabic Labels (10 tests)
+// ==============================================
+
+test.describe('TLDraw Whiteboard RTL', () => {
+    test.beforeEach(async ({ page }) => {
+        await page.goto('/test/whiteboard-sandbox');
+        await page.waitForSelector('[data-testid="tldraw-canvas"]');
+    });
+
+    test('P3-01: Create text box with Arabic label', async ({ page }) => {
+        await page.click('[data-testid="text-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('مبتدأ');
+
+        const textShape = page.locator('[data-testid="shape-text"]');
+        await expect(textShape).toContainText('مبتدأ');
+    });
+
+    test('P3-02: Arrow label with Arabic text', async ({ page }) => {
+        await page.click('[data-testid="arrow-tool"]');
+        // Create arrow
+        await page.mouse.move(100, 100);
+        await page.mouse.down();
+        await page.mouse.move(300, 100);
+        await page.mouse.up();
+
+        // Add label
+        await page.dblclick('[data-testid="shape-arrow"]');
+        await page.keyboard.type('إعراب');
+
+        const label = page.locator('[data-testid="arrow-label"]');
+        await expect(label).toContainText('إعراب');
+    });
+
+    test('P3-03: Sticky note with Arabic content', async ({ page }) => {
+        await page.click('[data-testid="note-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('ملاحظة هامة');
+
+        const note = page.locator('[data-testid="shape-note"]');
+        await expect(note).toContainText('ملاحظة');
+    });
+
+    test('P3-04: Group shapes with Arabic group name', async ({ page }) => {
+        // Select multiple shapes
+        await page.keyboard.down('Shift');
+        await page.click('[data-testid="shape-1"]');
+        await page.click('[data-testid="shape-2"]');
+        await page.keyboard.up('Shift');
+
+        // Group
+        await page.keyboard.press('Control+G');
+
+        // The group should exist
+        const group = page.locator('[data-testid="shape-group"]');
+        await expect(group).toBeVisible();
+    });
+
+    test('P3-05: Export PNG preserves Arabic labels', async ({ page }) => {
+        await page.click('[data-testid="text-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('نص عربي');
+
+        const exportBtn = page.locator('[data-testid="export-png"]');
+        await exportBtn.click();
+
+        // Check download triggered
+        const download = await page.waitForEvent('download');
+        expect(download.suggestedFilename()).toMatch(/\.png$/);
+    });
+
+    test('P3-06: Canvas zoom preserves text clarity', async ({ page }) => {
+        await page.click('[data-testid="text-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('تكبير');
+
+        // Zoom in
+        await page.keyboard.press('Control+=');
+        await page.keyboard.press('Control+=');
+
+        const textShape = page.locator('[data-testid="shape-text"]');
+        await expect(textShape).toBeVisible();
+    });
+
+    test('P3-07: Undo/redo Arabic text edits', async ({ page }) => {
+        await page.click('[data-testid="text-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('أصلي');
+
+        // Undo
+        await page.keyboard.press('Control+Z');
+
+        // Text should be removed
+        const textShape = page.locator('[data-testid="shape-text"]');
+        await expect(textShape).not.toBeVisible();
+
+        // Redo
+        await page.keyboard.press('Control+Y');
+        await expect(textShape).toBeVisible();
+    });
+
+    test('P3-08: Multi-line Arabic text in shape', async ({ page }) => {
+        await page.click('[data-testid="text-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('السطر الأول');
+        await page.keyboard.press('Enter');
+        await page.keyboard.type('السطر الثاني');
+
+        const textShape = page.locator('[data-testid="shape-text"]');
+        const text = await textShape.textContent();
+        expect(text).toContain('السطر الأول');
+        expect(text).toContain('السطر الثاني');
+    });
+
+    test('P3-09: Copy-paste shape preserves Arabic', async ({ page }) => {
+        await page.click('[data-testid="text-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('نسخ');
+
+        await page.keyboard.press('Control+C');
+        await page.keyboard.press('Control+V');
+
+        const shapes = page.locator('[data-testid="shape-text"]');
+        expect(await shapes.count()).toBe(2);
+    });
+
+    test('P3-10: Canvas auto-save includes Arabic content', async ({ page }) => {
+        await page.click('[data-testid="text-tool"]');
+        await page.click('[data-testid="tldraw-canvas"]');
+        await page.keyboard.type('حفظ تلقائي');
+
+        // Wait for auto-save (10 seconds per TDD)
+        await page.waitForTimeout(11000);
+
+        const saveIndicator = page.locator('[data-testid="save-indicator"]');
+        await expect(saveIndicator).toContainText(/Saved|محفوظ/);
+    });
+});
+
+// ==============================================
+// TEST CATEGORY 4: Mobile Keyboard (15 tests)
+// ==============================================
+
+test.describe('Mobile Arabic Keyboard', () => {
+    test.use({ viewport: { width: 375, height: 667 } }); // iPhone SE
+
+    test.beforeEach(async ({ page }) => {
+        await page.goto('/test/mobile-sandbox');
+    });
+
+    test('P4-01: Touch keyboard Arabic input (iOS Safari sim)', async ({ page }) => {
+        const editor = page.locator('[data-testid="mobile-editor"]');
+        await editor.tap();
+        await editor.type('مرحبا');
+
+        await expect(editor).toHaveValue('مرحبا');
+    });
+
+    test('P4-02: Autocorrect disabled for Arabic', async ({ page }) => {
+        const editor = page.locator('[data-testid="mobile-editor"]');
+
+        await expect(editor).toHaveAttribute('autocorrect', 'off');
+        await expect(editor).toHaveAttribute('spellcheck', 'false');
+    });
+
+    test('P4-03: Long-press for diacritics', async ({ page }) => {
+        // This tests that the input accepts diacritic characters
+        const editor = page.locator('[data-testid="mobile-editor"]');
+        await editor.fill('بِ'); // Ba with kasra
+
+        await expect(editor).toHaveValue('بِ');
+    });
+
+    test('P4-04: Swipe text selection RTL aware', async ({ page }) => {
+        const editor = page.locator('[data-testid="mobile-editor"]');
+        await editor.fill('اختيار النص');
+
+        // Perform selection gesture
+        await editor.tap();
+        await page.mouse.down();
+        await page.mouse.move(50, 0);
+        await page.mouse.up();
+
+        // Selection should work
+        const selection = await page.evaluate(() => window.getSelection()?.toString());
+        expect(selection?.length).toBeGreaterThan(0);
+    });
+
+    test('P4-05: Virtual keyboard language switch', async ({ page }) => {
+        const editor = page.locator('[data-testid="mobile-editor"]');
+
+        // Input should accept both Arabic and English without form issues
+        await editor.fill('مرحبا Hello');
+        await expect(editor).toHaveValue('مرحبا Hello');
+    });
+
+    test('P4-06: Portrait mode RTL layout', async ({ page }) => {
+        const container = page.locator('[data-testid="mobile-container"]');
+        await expect(container).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P4-07: Landscape mode RTL layout', async ({ page }) => {
+        await page.setViewportSize({ width: 667, height: 375 });
+
+        const container = page.locator('[data-testid="mobile-container"]');
+        await expect(container).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P4-08: Touch scroll in RTL document', async ({ page }) => {
+        await page.goto('/test/long-document');
+
+        const doc = page.locator('[data-testid="document-content"]');
+        await doc.evaluate((el) => el.scrollTo(0, 500));
+
+        const scrollTop = await doc.evaluate((el) => el.scrollTop);
+        expect(scrollTop).toBeGreaterThan(0);
+    });
+
+    test('P4-09: Pinch zoom preserves Arabic text', async ({ page }) => {
+        const editor = page.locator('[data-testid="mobile-editor"]');
+        await editor.fill('تكبير');
+
+        // Zoom handling is CSS-based, text should remain
+        await expect(editor).toHaveValue('تكبير');
+    });
+
+    test('P4-10: Tab focus order RTL', async ({ page }) => {
+        await page.keyboard.press('Tab');
+
+        const focused = page.locator(':focus');
+        const box = await focused.boundingBox();
+
+        // In RTL, first focusable should be on the right side
+        expect(box?.x).toBeGreaterThan(100);
+    });
+
+    test('P4-11: Form validation Arabic messages', async ({ page }) => {
+        await page.goto('/test/form-sandbox');
+
+        const submitBtn = page.locator('[data-testid="submit-btn"]');
+        await submitBtn.click();
+
+        const error = page.locator('[data-testid="error-message"]');
+        await expect(error).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P4-12: Dropdown menu RTL positioning', async ({ page }) => {
+        await page.goto('/test/dropdown-sandbox');
+
+        await page.click('[data-testid="dropdown-trigger"]');
+        const menu = page.locator('[data-testid="dropdown-menu"]');
+
+        const menuBox = await menu.boundingBox();
+        const triggerBox = await page.locator('[data-testid="dropdown-trigger"]').boundingBox();
+
+        // Menu should align to the right of trigger in RTL
+        expect(menuBox?.x).toBeLessThanOrEqual(triggerBox?.x ?? 0 + (triggerBox?.width ?? 0));
+    });
+
+    test('P4-13: Date picker Arabic months', async ({ page }) => {
+        await page.goto('/test/date-sandbox');
+
+        await page.click('[data-testid="date-input"]');
+        const monthLabel = page.locator('[data-testid="month-label"]');
+
+        const monthText = await monthLabel.textContent();
+        // Should contain Arabic month or Hijri calendar
+        expect(monthText).toMatch(/[\u0600-\u06FF]|January|February/);
+    });
+
+    test('P4-14: Search results RTL layout', async ({ page }) => {
+        await page.goto('/test/search-sandbox');
+
+        const searchInput = page.locator('[data-testid="search-input"]');
+        await searchInput.fill('حديث');
+        await searchInput.press('Enter');
+
+        const results = page.locator('[data-testid="search-results"]');
+        await expect(results).toHaveAttribute('dir', 'rtl');
+    });
+
+    test('P4-15: Pull-to-refresh gesture works', async ({ page }) => {
+        await page.goto('/test/pull-refresh');
+
+        const content = page.locator('[data-testid="refresh-content"]');
+
+        // Simulate pull-to-refresh
+        await content.evaluate((el) => {
+            el.dispatchEvent(new TouchEvent('touchstart', { touches: [{ clientY: 0 }] as any }));
+            el.dispatchEvent(new TouchEvent('touchmove', { touches: [{ clientY: 100 }] as any }));
+            el.dispatchEvent(new TouchEvent('touchend'));
+        });
+
+        // Refresh indicator should appear
+        const indicator = page.locator('[data-testid="refresh-indicator"]');
+        await expect(indicator).toBeVisible();
+    });
+});
