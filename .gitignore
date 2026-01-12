@@ -6,3 +6,4 @@
 .env.local.template
 .env.production.local
 # Ignore env files with secrets
+.vercel
