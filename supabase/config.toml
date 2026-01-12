@@ -2,10 +2,6 @@
 # Supabase CLI configuration for SanadFlow Study Hub
 # TDD v3.0 - Supabase + Vercel Architecture
 
-[project]
-project_id = "sanadflow-prod"
-region = "ap-southeast-1"  # Singapore region
-
 # ============================================================
 # API Configuration
 # ============================================================
@@ -38,7 +34,7 @@ max_client_conn = 100
 # ============================================================
 [realtime]
 enabled = true
-ip_version = "ipv4"
+ip_version = "IPv4"
 
 # ============================================================
 # Storage Configuration

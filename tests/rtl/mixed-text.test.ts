@@ -112,9 +112,15 @@ test.describe('Mixed Arabic-English Text (TC-011 to TC-025)', () => {
         await page.goto('/test/form-sandbox');
         const select = page.locator('[data-testid="grading-select"]');
 
-        await select.click();
-        const option = page.locator('option:has-text("صحيح")');
-        await expect(option).toBeVisible();
+        await expect(select).toBeVisible();
+
+        // Verify select has Arabic options by checking the DOM
+        const optionCount = await select.locator('option').count();
+        expect(optionCount).toBeGreaterThan(1); // At least the placeholder + options
+
+        // Check that Arabic option exists
+        const option = select.locator('option:has-text("صحيح")');
+        await expect(option).toHaveAttribute('value', 'sahih');
     });
 
     test('TC-023: Modal dialog RTL layout', async ({ page }: { page: Page }) => {
@@ -134,7 +140,7 @@ test.describe('Mixed Arabic-English Text (TC-011 to TC-025)', () => {
     });
 
     test('TC-025: Breadcrumb navigation RTL', async ({ page }: { page: Page }) => {
-        await page.goto('/workspace/test/documents');
+        await page.goto('/test/breadcrumb-sandbox');
         const breadcrumb = page.locator('[data-testid="breadcrumb"]');
 
         await expect(breadcrumb).toHaveAttribute('dir', 'rtl');

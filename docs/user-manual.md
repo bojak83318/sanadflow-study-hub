@@ -15,8 +15,19 @@
 
 ## 1. البدء | Getting Started
 
-### إنشاء حساب | Creating an Account
+### Data Import
+To populate the database with sample Hadiths:
 
+```bash
+# Run the import script
+npx tsx scripts/import-sample-data.ts
+```
+
+This will:
+1. Ensure a test user and workspace exist
+2. Import 5 sample Hadiths from `data/sample-hadiths.csv`
+
+### إنشاء حساب |
 **العربية:**
 1. اذهب إلى صفحة التسجيل
 2. أدخل بريدك الإلكتروني وكلمة المرور

@@ -57,7 +57,9 @@ export default defineConfig({
         timeout: 5000,
     },
 
-    // Start dev server before running tests
+    // WebServer config - disabled for manual server management
+    // Start server with: npm run build && npm run start
+    // WebServer config
     webServer: {
         command: 'npm run dev',
         url: 'http://localhost:3000',

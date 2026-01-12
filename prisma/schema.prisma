@@ -1,19 +1,23 @@
 // Prisma Schema for SanadFlow Study Hub
-// TDD v2.0 Section 3.1 - Core Tables
+// TDD v3.0 Section 3.3 - Supabase + Vercel Architecture
+// Updated: January 12, 2026
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")      // Port 6543 pooler (for queries)
+  directUrl = env("DIRECT_URL")        // Port 5432 direct (for migrations only)
 }
 
-model User {
-  id           String    @id @default(uuid()) @db.Uuid
-  email        String    @unique @db.VarChar(255)
-  passwordHash String    @map("password_hash") @db.VarChar(255)
+// ============================================================================
+// USER PROFILE - References Supabase auth.users
+// ============================================================================
+
+model UserProfile {
+  id           String    @id @db.Uuid // References auth.users(id), NOT auto-generated
   fullName     String    @map("full_name") @db.VarChar(255)
   role         String    @default("member") @db.VarChar(50)
   avatarUrl    String?   @map("avatar_url")
@@ -33,10 +37,13 @@ model User {
   resolvedComments     Comment[]          @relation("CommentResolver")
   documentVersions     DocumentVersion[]
 
-  @@index([email])
   @@index([role])
-  @@map("users")
+  @@map("user_profiles")
 }
+
+// ============================================================================
+// WORKSPACE - Collaborative study group
+// ============================================================================
 
 model Workspace {
   id          String   @id @default(uuid()) @db.Uuid
@@ -45,32 +52,37 @@ model Workspace {
   description String?
   ownerId     String   @map("owner_id") @db.Uuid
   iconEmoji   String?  @map("icon_emoji") @db.VarChar(10)
-  settings    Json     @default("{}")
+  settings    Json     @default("{\"rtl_default\":true}")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  owner     User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members   WorkspaceMember[]
-  documents Document[]
-  hadiths   Hadith[]
-  narrators Narrator[]
-  diagrams  Diagram[]
+  owner        UserProfile       @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members      WorkspaceMember[]
+  documents    Document[]
+  hadiths      Hadith[]
+  narrators    Narrator[]
+  diagrams     Diagram[]
+  yjsDocuments YjsDocument[]
 
   @@index([ownerId])
   @@index([slug])
   @@map("workspaces")
 }
 
+// ============================================================================
+// WORKSPACE MEMBER - Access control
+// ============================================================================
+
 model WorkspaceMember {
   id          String   @id @default(uuid()) @db.Uuid
   workspaceId String   @map("workspace_id") @db.Uuid
   userId      String   @map("user_id") @db.Uuid
-  permission  String   @default("edit") @db.VarChar(20)
+  permission  String   @default("edit") @db.VarChar(20) // 'view', 'edit', 'admin'
   invitedBy   String?  @map("invited_by") @db.Uuid
   joinedAt    DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
   @@index([userId])
@@ -78,12 +90,16 @@ model WorkspaceMember {
   @@map("workspace_members")
 }
 
+// ============================================================================
+// DOCUMENT - Study notes with Yjs collaborative editing
+// ============================================================================
+
 model Document {
   id            String    @id @default(uuid()) @db.Uuid
   workspaceId   String    @map("workspace_id") @db.Uuid
   title         String    @db.VarChar(500)
-  contentYjs    Bytes?    @map("content_yjs")
-  contentJson   Json?     @map("content_json")
+  contentYjs    Bytes?    @map("content_yjs")    // Yjs CRDT binary state
+  contentJson   Json?     @map("content_json")   // Fallback for search
   parentId      String?   @map("parent_id") @db.Uuid
   iconEmoji     String?   @map("icon_emoji") @db.VarChar(10)
   coverImageUrl String?   @map("cover_image_url")
@@ -92,22 +108,27 @@ model Document {
   updatedBy     String?   @map("updated_by") @db.Uuid
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6) // Soft delete (30-day trash)
 
-  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  creator   User               @relation("DocumentCreator", fields: [createdBy], references: [id])
-  updater   User?              @relation("DocumentUpdater", fields: [updatedBy], references: [id])
-  parent    Document?          @relation("DocumentHierarchy", fields: [parentId], references: [id])
-  children  Document[]         @relation("DocumentHierarchy")
-  hadiths   Hadith[]
-  diagrams  Diagram[]
-  comments  Comment[]
-  versions  DocumentVersion[]
+  workspace    Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator      UserProfile       @relation("DocumentCreator", fields: [createdBy], references: [id])
+  updater      UserProfile?      @relation("DocumentUpdater", fields: [updatedBy], references: [id])
+  parent       Document?         @relation("DocumentHierarchy", fields: [parentId], references: [id])
+  children     Document[]        @relation("DocumentHierarchy")
+  hadiths      Hadith[]
+  diagrams     Diagram[]
+  comments     Comment[]
+  versions     DocumentVersion[]
+  yjsDocument  YjsDocument?
 
   @@index([workspaceId])
   @@index([parentId])
   @@map("documents")
 }
+
+// ============================================================================
+// HADITH - Islamic narration with Arabic text
+// ============================================================================
 
 model Hadith {
   id                 String   @id @default(uuid()) @db.Uuid
@@ -116,77 +137,105 @@ model Hadith {
   arabicText         String   @map("arabic_text")
   englishTranslation String?  @map("english_translation")
   transliteration    String?
-  collection         String?  @db.VarChar(100)
+  collection         String?  @db.VarChar(100)   // e.g., "Sahih al-Bukhari"
   bookNumber         String?  @map("book_number") @db.VarChar(50)
   hadithNumber       String?  @map("hadith_number") @db.VarChar(50)
-  grading            String?  @db.VarChar(50)
+  grading            String?  @db.VarChar(50)    // 'Sahih', 'Hasan', 'Daif', 'Mawdu'
   narratorIds        String[] @map("narrator_ids") @db.Uuid
-  narrationChain     String?  @map("narration_chain")
+  narrationChain     String?  @map("narration_chain") // Sanad text
   topicTags          String[] @map("topic_tags")
   notes              String?
   createdBy          String   @map("created_by") @db.Uuid
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  document  Document? @relation(fields: [documentId], references: [id])
-  creator   User      @relation(fields: [createdBy], references: [id])
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document?   @relation(fields: [documentId], references: [id])
+  creator   UserProfile @relation(fields: [createdBy], references: [id])
 
   @@index([workspaceId])
   @@index([grading])
   @@map("hadiths")
 }
 
+// ============================================================================
+// NARRATOR - Hadith chain scholars (Rijal)
+// ============================================================================
+
 model Narrator {
   id               String   @id @default(uuid()) @db.Uuid
   workspaceId      String   @map("workspace_id") @db.Uuid
   nameArabic       String   @map("name_arabic") @db.VarChar(255)
   nameEnglish      String?  @map("name_english") @db.VarChar(255)
-  kunyah           String?  @db.VarChar(100)
-  laqab            String?  @db.VarChar(100)
+  kunyah           String?  @db.VarChar(100)   // e.g., "Abu Hurayrah"
+  laqab            String?  @db.VarChar(100)   // e.g., "al-Sadiq"
   birthYear        Int?     @map("birth_year")
   deathYear        Int?     @map("death_year")
   biographyAr      String?  @map("biography_ar")
   biographyEn      String?  @map("biography_en")
-  reliabilityGrade String?  @map("reliability_grade") @db.VarChar(50)
+  reliabilityGrade String?  @map("reliability_grade") @db.VarChar(50) // 'Thiqah', 'Saduq', etc.
   teachers         String[] @db.Uuid
   students         String[] @db.Uuid
   createdBy        String   @map("created_by") @db.Uuid
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  creator   User      @relation(fields: [createdBy], references: [id])
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   UserProfile @relation(fields: [createdBy], references: [id])
 
   @@index([workspaceId])
   @@map("narrators")
 }
 
-model Diagram {
-  id              String   @id @default(uuid()) @db.Uuid
-  workspaceId     String   @map("workspace_id") @db.Uuid
-  documentId      String?  @map("document_id") @db.Uuid
-  title           String   @db.VarChar(255)
-  description     String?
-  storageLocation String   @map("storage_location") @db.VarChar(20)
-  blob            Bytes?
-  r2Url           String?  @map("r2_url")
-  fileSizeBytes   BigInt   @map("file_size_bytes")
-  mimeType        String   @default("image/png") @map("mime_type") @db.VarChar(50)
-  canvasState     Json?    @map("canvas_state")
-  createdBy       String   @map("created_by") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+// ============================================================================
+// DIAGRAM - TLDraw whiteboard snapshots (stored in Supabase Storage)
+// ============================================================================
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  document  Document? @relation(fields: [documentId], references: [id])
-  creator   User      @relation(fields: [createdBy], references: [id])
+model Diagram {
+  id            String   @id @default(uuid()) @db.Uuid
+  workspaceId   String   @map("workspace_id") @db.Uuid
+  documentId    String?  @map("document_id") @db.Uuid
+  title         String   @db.VarChar(255)
+  description   String?
+  storagePath   String   @map("storage_path") // Supabase Storage path: "workspace_id/user_id/filename.png"
+  fileSizeBytes BigInt   @map("file_size_bytes")
+  mimeType      String   @default("image/png") @map("mime_type") @db.VarChar(50)
+  canvasState   Json?    @map("canvas_state") // TLDraw v1.29.2 state
+  createdBy     String   @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document?   @relation(fields: [documentId], references: [id])
+  creator   UserProfile @relation(fields: [createdBy], references: [id])
 
   @@index([workspaceId])
-  @@index([storageLocation])
   @@index([documentId])
   @@map("diagrams")
 }
+
+// ============================================================================
+// YJS DOCUMENT - Real-time collaboration state
+// ============================================================================
+
+model YjsDocument {
+  roomId      String   @id @map("room_id") @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  documentId  String   @unique @map("document_id") @db.Uuid
+  state       Bytes    // Yjs Y.encodeStateAsUpdate() binary
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document  Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([documentId])
+  @@map("yjs_documents")
+}
+
+// ============================================================================
+// COMMENT - Document annotations
+// ============================================================================
 
 model Comment {
   id              String    @id @default(uuid()) @db.Uuid
@@ -205,16 +254,20 @@ model Comment {
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  document Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  parent   Comment?  @relation("CommentThread", fields: [parentCommentId], references: [id])
-  replies  Comment[] @relation("CommentThread")
-  author   User      @relation(fields: [authorId], references: [id])
-  resolver User?     @relation("CommentResolver", fields: [resolvedBy], references: [id])
+  document Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  parent   Comment?    @relation("CommentThread", fields: [parentCommentId], references: [id])
+  replies  Comment[]   @relation("CommentThread")
+  author   UserProfile @relation(fields: [authorId], references: [id])
+  resolver UserProfile? @relation("CommentResolver", fields: [resolvedBy], references: [id])
 
   @@index([documentId])
   @@index([authorId])
   @@map("comments")
 }
+
+// ============================================================================
+// DOCUMENT VERSION - Version history
+// ============================================================================
 
 model DocumentVersion {
   id                String   @id @default(uuid()) @db.Uuid
@@ -227,8 +280,8 @@ model DocumentVersion {
   changeDescription String?  @map("change_description")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  changer  User     @relation(fields: [changedBy], references: [id])
+  document Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  changer  UserProfile @relation(fields: [changedBy], references: [id])
 
   @@unique([documentId, versionNumber])
   @@index([documentId])

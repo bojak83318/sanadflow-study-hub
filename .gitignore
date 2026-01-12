@@ -14,3 +14,11 @@ node_modules/
 out/
 build/
 dist/
+
+# Prisma env
+.env
+core
+k6
+k6-*
+*.tar.gz
+k6-*/k6

@@ -20,7 +20,14 @@
 > | `.github/workflows/backup.yml` | ✅ Created |
 > | `docs/environment-variables.md` | ✅ Created |
 >
-> **⚠️ Manual steps required**: Supabase project creation, Vercel deployment, and GitHub secrets configuration require interactive web UI access.
+> ✅ **Database Migrations Applied** (Jan 12, 2026)
+>
+> | Migration | Status |
+> |-----------|--------|
+> | `001_init_schema.sql` | ✅ Applied - 10 tables created |
+> | `002_rls_policies.sql` | ✅ Applied - RLS enabled on all tables |
+> | `003_arabic_fts.sql` | ✅ Applied - 4 search functions created |
+> | `004_fix_rls_recursion.sql` | ✅ Applied - Fixed infinite recursion |
 
 ---
 
